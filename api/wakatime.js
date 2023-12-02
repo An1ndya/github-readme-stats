@@ -1,16 +1,15 @@
-require("dotenv").config();
-const {
-  renderError,
-  parseBoolean,
+import { renderWakatimeCard } from "../src/cards/wakatime-card.js";
+import {
   clampValue,
-  parseArray,
   CONSTANTS,
-} = require("../src/common/utils");
-const { isLocaleAvailable } = require("../src/translations");
-const { fetchWakatimeStats } = require("../src/fetchers/wakatime-fetcher");
-const wakatimeCard = require("../src/cards/wakatime-card");
+  parseArray,
+  parseBoolean,
+  renderError,
+} from "../src/common/utils.js";
+import { fetchWakatimeStats } from "../src/fetchers/wakatime-fetcher.js";
+import { isLocaleAvailable } from "../src/translations.js";
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   const {
     username,
     title_color,
@@ -29,34 +28,47 @@ module.exports = async (req, res) => {
     langs_count,
     hide,
     api_domain,
-    range,
     border_radius,
     border_color,
+    display_format,
+    disable_animations,
   } = req.query;
 
   res.setHeader("Content-Type", "image/svg+xml");
 
   if (locale && !isLocaleAvailable(locale)) {
-    return res.send(renderError("Something went wrong", "Language not found"));
+    return res.send(
+      renderError("Something went wrong", "Language not found", {
+        title_color,
+        text_color,
+        bg_color,
+        border_color,
+        theme,
+      }),
+    );
   }
 
   try {
-    const stats = await fetchWakatimeStats({ username, api_domain, range });
+    const stats = await fetchWakatimeStats({ username, api_domain });
 
     let cacheSeconds = clampValue(
-      parseInt(cache_seconds || CONSTANTS.TWO_HOURS, 10),
-      CONSTANTS.TWO_HOURS,
+      parseInt(cache_seconds || CONSTANTS.CARD_CACHE_SECONDS, 10),
+      CONSTANTS.SIX_HOURS,
       CONSTANTS.ONE_DAY,
     );
+    cacheSeconds = process.env.CACHE_SECONDS
+      ? parseInt(process.env.CACHE_SECONDS, 10) || cacheSeconds
+      : cacheSeconds;
 
-    if (!cache_seconds) {
-      cacheSeconds = CONSTANTS.FOUR_HOURS;
-    }
-
-    res.setHeader("Cache-Control", `public, max-age=${cacheSeconds}`);
+    res.setHeader(
+      "Cache-Control",
+      `max-age=${
+        cacheSeconds / 2
+      }, s-maxage=${cacheSeconds}, stale-while-revalidate=${CONSTANTS.ONE_DAY}`,
+    );
 
     return res.send(
-      wakatimeCard(stats, {
+      renderWakatimeCard(stats, {
         custom_title,
         hide_title: parseBoolean(hide_title),
         hide_border: parseBoolean(hide_border),
@@ -73,9 +85,25 @@ module.exports = async (req, res) => {
         locale: locale ? locale.toLowerCase() : null,
         layout,
         langs_count,
+        display_format,
+        disable_animations: parseBoolean(disable_animations),
       }),
     );
   } catch (err) {
-    return res.send(renderError(err.message, err.secondaryMessage));
+    res.setHeader(
+      "Cache-Control",
+      `max-age=${CONSTANTS.ERROR_CACHE_SECONDS / 2}, s-maxage=${
+        CONSTANTS.ERROR_CACHE_SECONDS
+      }, stale-while-revalidate=${CONSTANTS.ONE_DAY}`,
+    ); // Use lower cache period for errors.
+    return res.send(
+      renderError(err.message, err.secondaryMessage, {
+        title_color,
+        text_color,
+        bg_color,
+        border_color,
+        theme,
+      }),
+    );
   }
 };
